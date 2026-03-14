@@ -7,12 +7,14 @@ import com.google.gson.reflect.TypeToken;
 import com.qtest.cucumber.model.CucumberFeature;
 import com.qtest.cucumber.model.CucumberScenario;
 import com.qtest.cucumber.model.CucumberStep;
+import com.qtest.cucumber.model.CucumberStepResult;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -77,7 +79,7 @@ public class CucumberJsonParser {
         }
 
         for (CucumberFeature feature : features) {
-            sanitiseFeature(feature);
+            // Null-safe statistics and tag extraction are handled downstream
             calculateFeatureStatistics(feature);
         }
 
@@ -93,7 +95,7 @@ public class CucumberJsonParser {
      * <p>Search order:
      * <ol>
      *   <li>Feature-level tags</li>
-     *   <li>First scenario's tags (fallback for projects that tag scenarios, not features)</li>
+     *   <li>Scenario-level tags</li>
      * </ol>
      * Returns {@code "UNKNOWN"} when no tag is found.
      * </p>
@@ -104,8 +106,9 @@ public class CucumberJsonParser {
         if (id != null) return id;
 
         // 2. Scenario-level tags (fallback)
-        if (feature.getScenarios() != null) {
-            for (CucumberScenario scenario : feature.getScenarios()) {
+        List<CucumberScenario> scenarios = feature.getScenarios();
+        if (scenarios != null) {
+            for (CucumberScenario scenario : scenarios) {
                 id = findQtestTag(scenario.getTags());
                 if (id != null) return id;
             }
@@ -141,24 +144,6 @@ public class CucumberJsonParser {
         return sb.toString().trim();
     }
 
-    /** Null-safe field defaulting before statistics are calculated. */
-    private void sanitiseFeature(CucumberFeature feature) {
-        if (feature.getScenarios() == null) {
-            feature.setScenarios(new ArrayList<>());
-        }
-        if (feature.getTags() == null) {
-            feature.setTags(new ArrayList<>());
-        }
-        for (CucumberScenario scenario : feature.getScenarios()) {
-            if (scenario.getSteps() == null) {
-                scenario.setSteps(new ArrayList<>());
-            }
-            if (scenario.getTags() == null) {
-                scenario.setTags(new ArrayList<>());
-            }
-        }
-    }
-
     private void calculateFeatureStatistics(CucumberFeature feature) {
         int totalScenarios   = 0;
         int passedScenarios  = 0;
@@ -169,13 +154,18 @@ public class CucumberJsonParser {
         int failedSteps  = 0;
         int skippedSteps = 0;
 
-        for (CucumberScenario scenario : feature.getScenarios()) {
+        List<CucumberScenario> scenarios = feature.getScenarios();
+        if (scenarios == null) {
+            scenarios = Collections.emptyList();
+        }
+
+        for (CucumberScenario scenario : scenarios) {
             totalScenarios++;
             int sPass = 0, sFail = 0, sSkip = 0;
 
             for (CucumberStep step : scenario.getSteps()) {
                 totalSteps++;
-                CucumberStep.StepResult result = step.getResult();
+                CucumberStepResult result = step.getResult();
                 if (result == null) continue;
                 if (result.isFailed())  { failedSteps++;  sFail++; }
                 else if (result.isSkipped()) { skippedSteps++; sSkip++; }

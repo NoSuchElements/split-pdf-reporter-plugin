@@ -3,7 +3,6 @@ package com.qtest.pdf;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
-import org.apache.pdfbox.pdmodel.common.PDRectangle;
 
 import java.io.IOException;
 
@@ -47,16 +46,6 @@ public class PdfStyler {
         cs.newLineAtOffset(x, y);
         cs.showText(text);
         cs.endText();
-    }
-
-    /**
-     * Draw left-aligned header text near the top of the page.
-     */
-    public void drawHeader(PDDocument doc, PDPageContentStream cs,
-                           String text, float margin) throws IOException {
-        PDRectangle mediaBox = cs.getCurrentPage().getMediaBox();
-        float y = mediaBox.getUpperRightY() - margin;
-        drawText(doc, cs, text, margin, y, boldFont(), 18f);
     }
 
     /**
