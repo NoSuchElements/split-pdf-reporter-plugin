@@ -6,9 +6,9 @@ import com.qtest.pdf.FeaturePdfGenerator;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
+import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
-import org.apache.maven.plugins.annotations.LifecyclePhase;
 
 import java.io.File;
 import java.io.IOException;
@@ -128,6 +128,22 @@ public class SplitPdfReporterMojo extends AbstractMojo {
     @Parameter(property = "verbose", defaultValue = "false")
     private boolean verbose;
 
+    /**
+     * Control which sections are rendered for each feature PDF.
+     *
+     * <p>These correspond to the Summary, Feature, and Detailed pages.
+     * All are enabled by default to match the original behaviour, minus the
+     * deprecated dashboard.</p>
+     */
+    @Parameter(property = "includeSummaryPage", defaultValue = "true")
+    private boolean includeSummaryPage;
+
+    @Parameter(property = "includeFeaturePage", defaultValue = "true")
+    private boolean includeFeaturePage;
+
+    @Parameter(property = "includeDetailedPages", defaultValue = "true")
+    private boolean includeDetailedPages;
+
     // -----------------------------------------------------------------------
     // Execution
     // -----------------------------------------------------------------------
@@ -196,7 +212,8 @@ public class SplitPdfReporterMojo extends AbstractMojo {
                         getLog().info("  → File     : " + filename);
                     }
 
-                    FeaturePdfGenerator generator = new FeaturePdfGenerator();
+                    FeaturePdfGenerator generator = new FeaturePdfGenerator(
+                            includeSummaryPage, includeFeaturePage, includeDetailedPages);
                     generator.generateFeaturePdf(feature, outputPath);
 
                     getLog().info("✓ Generated : " + filename);
@@ -287,6 +304,9 @@ public class SplitPdfReporterMojo extends AbstractMojo {
         getLog().info("  outputDirectory     : " + outputDirectory.getAbsolutePath());
         getLog().info("  failOnNoFeatures    : " + failOnNoFeatures);
         getLog().info("  verbose             : " + verbose);
+        getLog().info("  includeSummaryPage  : " + includeSummaryPage);
+        getLog().info("  includeFeaturePage  : " + includeFeaturePage);
+        getLog().info("  includeDetailedPages: " + includeDetailedPages);
         getLog().info("========================================");
     }
 }
