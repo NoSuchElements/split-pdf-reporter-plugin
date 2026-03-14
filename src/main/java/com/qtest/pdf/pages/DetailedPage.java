@@ -101,12 +101,20 @@ public class DetailedPage {
             if (step.getDocString() != null && step.getDocString().getContent() != null) {
                 y = addDocString(doc, cs, step.getDocString().getContent(), margin + 10f, y, box.getWidth() - 2 * margin - 10f);
             }
+        }
 
-            // Screenshot
-            if (step.getScreenshotBase64() != null && !step.getScreenshotBase64().isEmpty()) {
-                y = addScreenshot(doc, page, step.getScreenshotBase64(), margin + 10f, y - 4f, 400f);
+        // Screenshots: render zero, one, or many images under the textual step details
+        List<String> screenshots = step.getScreenshotBase64List();
+        if (!screenshots.isEmpty()) {
+            for (String base64 : screenshots) {
+                if (base64 == null || base64.isEmpty()) {
+                    continue;
+                }
+                y = addScreenshot(doc, page, base64, margin + 10f, y - 4f, 400f);
+                y -= 4f; // small spacer between multiple images
             }
         }
+
         return y;
     }
 
