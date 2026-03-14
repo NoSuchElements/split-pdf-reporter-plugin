@@ -36,15 +36,34 @@ public class PdfStyler {
 
     /**
      * Draw a text string at (x, y) with the given font and size.
+     *
+     * <p>Sanitises control characters (\r, \n and other non-printables) to
+     * avoid PDFBox WinAnsiEncoding errors when rendering stack traces or
+     * platform-specific newlines.</p>
      */
     public void drawText(PDDocument doc, PDPageContentStream cs,
                          String text, float x, float y,
                          PDType1Font font, float fontSize) throws IOException {
         if (text == null) return;
+
+        // Replace CR/LF and other control chars with spaces so they are
+        // representable in the WinAnsiEncoding used by Type1 fonts.
+        StringBuilder sb = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (ch == '\r' || ch == '\n' || ch < 0x20) {
+                sb.append(' ');
+            } else {
+                sb.append(ch);
+            }
+        }
+        String safe = sb.toString();
+        if (safe.isEmpty()) return;
+
         cs.beginText();
         cs.setFont(font, fontSize);
         cs.newLineAtOffset(x, y);
-        cs.showText(text);
+        cs.showText(safe);
         cs.endText();
     }
 
