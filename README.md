@@ -1,6 +1,6 @@
 # Split PDF Reporter Plugin
 
-A Maven plugin for generating **per-feature PDF reports** from Cucumber JSON test results. Each feature gets its own PDF file, eliminating the font corruption bugs of grasshopper7 through complete architectural rewrite using **iText 7**.
+A Maven plugin for generating **per-feature PDF reports** from Cucumber JSON test results. Each feature gets its own PDF file, eliminating the font corruption bugs of grasshopper7 through a complete architectural rewrite using **Apache PDFBox** (Apache-2.0, fully compatible with MIT).
 
 ## Problem Solved
 
@@ -11,23 +11,23 @@ The grasshopper7 `cucumber-pdf-report` library has a **fundamental design flaw**
 - **Unfixable**: Reflection hacks don't work - the stream is already closed
 
 **This plugin solves it completely** by:
-- Using **iText 7** (industry standard, stateless design)
-- Creating **fresh font instances per PDF** (no static state)
+- Using **Apache PDFBox** with built-in Type1 fonts (no external font streams)
+- Creating **fresh resource instances per PDF** (no static state)
 - Generating **one PDF per feature file** (isolated resources)
-- Running **reliably across 100+ PDFs** in single JVM
+- Running **reliably across 100+ PDFs** in a single JVM
 
 ## Features
 
 ✅ **Per-Feature PDFs** - One PDF file per Cucumber feature  
 ✅ **qTest Integration** - Filename includes @QTEST_TC_XXXX tag  
-✅ **No Font Corruption** - Complete iText 7 rewrite, stateless design  
-✅ **Rich Content** - Dashboard, summary tables, detailed steps with screenshots  
+✅ **No Font Corruption** - Stateless design, no shared fonts/streams  
+✅ **Rich Content** - Dashboard, summary, detailed steps with screenshots  
 ✅ **Embedded Screenshots** - Base64 images rendered inline  
 ✅ **Error Details** - Failed steps show first 3 lines + overflow count  
-✅ **DataTables & DocStrings** - Formatted appropriately in PDF  
+✅ **DataTables & DocStrings** - Rendered as monospaced text blocks  
 ✅ **Thread-Safe** - Each PDF gets its own resource instances  
 ✅ **Maven Integration** - Post-integration-test phase hook  
-✅ **Zero Dependencies** - Only iText 7, Gson, SLF4J  
+✅ **Permissive Stack** - Apache PDFBox + Gson + SLF4J (MIT-friendly)  
 
 ## Installation
 
@@ -37,7 +37,7 @@ The grasshopper7 `cucumber-pdf-report` library has a **fundamental design flaw**
 <plugin>
     <groupId>com.qtest</groupId>
     <artifactId>split-pdf-reporter-plugin</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <executions>
         <execution>
             <phase>post-integration-test</phase>
@@ -69,14 +69,19 @@ PDFs are generated automatically in `target/cucumber-reports/` after tests compl
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `cucumberJson` | File | `${project.build.directory}/cucumber.json` | Location of Cucumber JSON file |
+| `cucumberJsonPattern` | String | `null` | Optional Ant-style glob for multiple JSON files |
 | `reportOutputDir` | File | `${project.build.directory}/cucumber-reports` | Output directory for PDFs |
-| `skip` | Boolean | `false` | Skip plugin execution |
+| `skipSplitPdfReporter` | Boolean | `false` | Skip plugin execution |
+| `failOnNoFeatures` | Boolean | `true` | Fail build when no features found |
 | `verbose` | Boolean | `false` | Enable verbose logging |
 
 ### Command-Line Override
 
 ```bash
-mvn verify -DcucumberJson=/path/to/results.json -DreportOutputDir=/path/to/pdfs
+mvn verify \
+  -DcucumberJson=/path/to/results.json \
+  -DreportOutputDir=/path/to/pdfs \
+  -Dverbose=true
 ```
 
 ### Skip Plugin
@@ -91,25 +96,27 @@ Each feature PDF contains:
 
 ### Page 1: Dashboard
 - Feature name with overall status badge (PASSED/FAILED/SKIPPED)
-- Scenario & step statistics
-- Distribution charts (passed/failed/skipped percentages)
+- Scenario & step statistics (counts)
+- Textual distribution summary for scenarios and steps
 
 ### Page 2: Summary
-- Table of all scenarios
-- Scenario name, status badge, passed/failed step counts, duration
-- Totals footer with aggregate statistics
+- Table-like listing of all scenarios
+- Scenario name, status, passed/failed step counts, duration
+- Totals line with aggregate step statistics
 
 ### Pages 3+: Detailed
 - **One page per scenario** showing:
-  - Scenario name, tags, duration, status
+  - Scenario name, duration, status
   - Every step with:
     - Keyword (Given/When/Then) + step name
-    - Colored status dot (● PASSED/FAILED/SKIPPED)
-    - Duration in milliseconds
-    - Error message (red text, first 3 lines + overflow count)
-    - DataTables (formatted with headers and alternating row colors)
-    - DocStrings (mono-spaced code blocks)
-    - **Embedded screenshots** (base64 decoded & rendered inline)
+    - Status + duration in milliseconds
+    - Error message (first 3 lines + overflow count)
+    - DataTables (rows rendered as `val1 | val2 | ...`)
+    - DocStrings (monospace, one line per row)
+    - **Embedded screenshots** (base64 decoded & drawn into the page)
+
+> Note: The PDFBox layout is more "hand-crafted" than the original iText table-based layout,
+> but the structure and information content closely match the grasshopper style.
 
 ## Filename Format
 
@@ -127,23 +134,9 @@ Login_Functionality@QTEST_TC_99999.pdf
 
 ### How qTest Tag is Extracted
 
-1. Feature tags are searched for `@QTEST_TC_XXXX` pattern
-2. If found: PDF filename includes it
-3. If not found: Uses `UNKNOWN`
-
-**Example Feature File**:
-
-```gherkin
-@QTEST_TC_12345
-@Critical
-Feature: User Login
-  Scenario: Valid credentials
-    Given user is on login page
-    When user enters valid credentials
-    Then user should see dashboard
-```
-
-**Generated PDF**: `User_Login@QTEST_TC_12345.pdf`
+1. Feature tags are searched for `@QTEST_TC_XXXX` (or `QTEST_TC_XXXX`)  
+2. If not found at feature level, all scenarios are scanned for the same tag  
+3. If still not found: uses `UNKNOWN`
 
 ## Architecture
 
@@ -153,70 +146,77 @@ Unlike grasshopper7, this plugin **never stores fonts or resources statically**:
 
 ```java
 // ✅ CORRECT - Fresh instance per PDF
-for (Feature feature : features) {
-    FeaturePdfGenerator generator = new FeaturePdfGenerator(); // Fresh fonts
+for (CucumberFeature feature : features) {
+    FeaturePdfGenerator generator = new FeaturePdfGenerator();
     generator.generateFeaturePdf(feature, outputPath);
 }
-
-// ❌ WRONG (grasshopper7 approach)
-public class ReportFont {
-    private static PdfFont font; // ← PROBLEM: Static state!
-}
 ```
+
+All fonts and drawing primitives are scoped to the current `PDDocument` and
+`PDPageContentStream`. After `document.save()` and `document.close()`, the
+resources are eligible for garbage collection.
 
 ### Component Design
 
 ```
 SplitPdfReporterMojo (Maven plugin entry point)
     ↓
-CucumberJsonParser (Parse JSON, calculate stats)
+CucumberJsonParser (Parse JSON, calculate stats, extract qTest tag)
     ↓
 FeaturePdfGenerator (Coordinate PDF generation)
-    ├─ PdfStyler (Fresh fonts + styling per PDF)
+    ├─ PdfStyler (PDFBox fonts + drawing primitives)
+    ├─ PdfChartGenerator (summary text for distributions)
     ├─ DashboardPage (Page 1)
     ├─ SummaryPage (Page 2)
     └─ DetailedPage (Pages 3+)
         ├─ Step rendering with keywords
         ├─ Error message display
-        ├─ DataTable formatting
+        ├─ DataTable rendering
         ├─ DocString rendering
-        └─ Screenshot embedding (base64)
+        └─ Screenshot embedding (base64 → PDImageXObject)
 ```
 
-## Why iText 7?
+### Why Apache PDFBox?
 
-| Aspect | grasshopper7 | iText 7 |
-|--------|-------------|--------|
-| Font State | Static (broken) | Stateless ✓ |
-| Multi-PDF | Fails after 1st | Works perfectly ✓ |
-| Thread Safety | No | Yes ✓ |
-| Active Development | Abandoned | Maintained ✓ |
-| Industry Standard | No | Yes ✓ |
-| License | Unknown | AGPL-3.0 + Commercial ✓ |
+| Aspect | grasshopper7 | iText 7 (old impl) | PDFBox (current) |
+|--------|--------------|--------------------|------------------|
+| Font State | Static, broken | Stateless | Stateless |
+| Multi-PDF | Fails after 1st | Works | Works |
+| License | Unknown | AGPL/commercial | Apache-2.0 ✓ |
+| MIT Compatibility | No | Risky | Yes ✓ |
+| Dependency Size | Heavy | Moderate | Moderate |
+| Custom Layout | Limited | Powerful | Manual but flexible |
+
+PDFBox gives us a **permissive license** while still providing enough power
+to implement the required pages and embedded screenshots.
 
 ## Logging
 
-Plugin logs to SLF4J with:
+The plugin logs to SLF4J with messages such as:
 
 ```
 [INFO] ========================================
-[INFO]    Split PDF Reporter Plugin v1.0.0
-[INFO]    Per-Feature Cucumber PDF Generation
+[INFO]  Split PDF Reporter Plugin v1.1.0
+[INFO]  Per-Feature Cucumber PDF Generation (PDFBox)
 [INFO] ========================================
-[INFO] Input: /path/to/cucumber.json
-[INFO] Output: /path/to/cucumber-reports
-[INFO] Parsed 3 features
-[INFO] ✓ Generated: Feature1@QTEST_TC_123.pdf
-[INFO] ✓ Generated: Feature2@QTEST_TC_124.pdf
-[INFO] ✓ Generated: Feature3@QTEST_TC_125.pdf
-[INFO] ========================================
-[INFO]    Generation Summary
-[INFO]    Success: 3
-[INFO]    Failures: 0
-[INFO] ========================================
+[INFO]  cucumberJson        : /path/to/target/cucumber.json
+[INFO]  cucumberJsonPattern : (none)
+[INFO]  outputDirectory     : /path/to/target/cucumber-reports
+[INFO]  failOnNoFeatures    : true
+[INFO]  verbose             : false
+[INFO] Parsed 3 feature(s) from cucumber.json
+[INFO] ✓ Generated : Feature1@QTEST_TC_123.pdf
+[INFO] ✓ Generated : Feature2@QTEST_TC_124.pdf
+[INFO] ✓ Generated : Feature3@QTEST_TC_125.pdf
+[INFO] ==============================
+[INFO]  Generation Summary
+[INFO]  Output : /path/to/target/cucumber-reports
+[INFO]  ✓ Success : 3
+[INFO]  ✗ Failures: 0
+[INFO] ==============================
 ```
 
-Enable debug logging:
+Enable verbose logging:
 
 ```xml
 <configuration>
@@ -233,24 +233,19 @@ Enable debug logging:
 ## Troubleshooting
 
 ### PDF not generated
-- Check `target/cucumber.json` exists
+- Check `target/cucumber.json` exists or that `cucumberJsonPattern` matches files
 - Check plugin phase timing (post-integration-test)
-- Check logs for errors
+- Check logs for errors (enable `-Dverbose=true`)
 
-### Font corruption (if using old version)
-- Update to version 1.0.0+
-- Verify using iText 7 (check pom.xml dependency)
+### Screenshots not showing
+- Ensure Cucumber JSON includes base64 embeddings
+- Check mime type is `image/png` or `image/jpeg`
 
 ### Out of Memory
 - Large test suites with many screenshots may need heap increase:
   ```bash
   mvn clean verify -Xmx2g
   ```
-
-### Screenshots not showing
-- Ensure Cucumber JSON includes base64 embeddings
-- Check mime type is `image/png` or `image/jpeg`
-- Verify step has correct `@Attachment("screenshot")` annotation
 
 ## Contributing
 
@@ -262,11 +257,15 @@ Contributions welcome! Please:
 
 ## License
 
-MIT License - See LICENSE file for details
+MIT License - See LICENSE file for details.  
+Internal PDF generation now uses **Apache PDFBox (Apache-2.0)** to avoid any
+AGPL/commercial licensing conflicts.
 
 ## Acknowledgments
 
-Built to solve the limitations of grasshopper7 and provide reliable per-feature PDF generation for Cucumber test automation.
+Originally built to solve the limitations of grasshopper7 and provide
+reliable per-feature PDF generation for Cucumber test automation, now
+updated to use a fully permissive PDF stack.
 
 ## Support
 

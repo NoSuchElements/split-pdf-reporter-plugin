@@ -1,4 +1,4 @@
-# Split PDF Reporter - Architecture Documentation
+# Split PDF Reporter - Architecture Documentation (PDFBox Edition)
 
 ## Problem Statement
 
@@ -13,52 +13,48 @@ public class ReportFont {
 }
 ```
 
-### Why This Fails
+The earlier 1.0.0 version of this plugin used iText 7 to fix grasshopper7's
+static state bug, but iText Core is AGPL/commercial, which is not ideal for
+an MIT-licensed plugin.
 
-1. **First PDF generation**: Opens font InputStream, reads bytes into PdfFont
-2. **Stream closed**: After first document completes, InputStream is exhausted
-3. **Second PDF attempt**: Tries to reuse same static font instance
-4. **Result**: Corrupted font data, rendering failures, text becomes garbage
-5. **Reflection workaround fails**: Stream is already closed, cannot reopen
+## Solution: Stateless Architecture + Permissive PDF Library
 
-## Solution: Stateless Architecture
+This plugin uses a **stateless architecture** with **Apache PDFBox** as the
+PDF engine:
 
-This plugin uses **complete architectural rewrite** with **no static state**:
+- No static fonts or shared InputStreams
+- Fresh `PDDocument` and `PDPageContentStream` per feature
+- Built-in Type1 fonts (HELVETICA, COURIER, etc.), no external font files
+- Apache-2.0 license (compatible with MIT)
 
 ### Core Principle
 
-**Each PDF gets its own fresh resource instances**:
+**Each feature PDF gets completely independent resources - no shared state**:
 
 ```java
-// ✅ CORRECT approach
 for (CucumberFeature feature : features) {
-    // Fresh instances - no shared state
     FeaturePdfGenerator generator = new FeaturePdfGenerator();
-    PdfStyler styler = new PdfStyler();           // Fresh fonts
-    PdfChartGenerator charts = new PdfChartGenerator(styler);
-    
-    // Generate PDF with isolated resources
-    generator.generateFeaturePdf(feature, outputPath);
-    // All resources garbage-collected when scope exits
+    String qtestId  = parser.extractQtestCaseId(feature);
+    String filename = FeaturePdfGenerator.generateFilename(feature, qtestId);
+    String output   = outputDir + File.separator + filename;
+
+    generator.generateFeaturePdf(feature, output);
 }
 ```
 
 ## Technology Stack
 
-### iText 7 (Core)
-- **Why**: Industry standard, stateless design, active maintenance
-- **No static fonts**: Each PdfFont instance is independent
-- **Thread-safe**: Can generate multiple PDFs in parallel
-- **Stream handling**: Fresh InputStream per document
+### Apache PDFBox
+- PDF engine (Apache-2.0)
+- Uses `PDDocument`, `PDPage`, `PDPageContentStream`
+- Built-in Type1 fonts (no TTF/OTF packaging)
 
 ### Gson (JSON Parsing)
 - Lightweight, no external state
-- Type token deserialization for Cucumber JSON
-- Immutable model objects
+- Deserializes Cucumber JSON into model objects
 
 ### SLF4J (Logging)
-- Facade pattern, no static logger state issues
-- Adapter-based, implementation-agnostic
+- Pluggable logging facade
 
 ## Component Architecture
 
@@ -71,7 +67,7 @@ for (CucumberFeature feature : features) {
                  ▼
 ┌─────────────────────────────────────────┐
 │    CucumberJsonParser                   │ Parses JSON + calculates stats
-│  • Parse features/scenarios/steps       │ (Immutable POJO models)
+│  • Parse features/scenarios/steps       │
 │  • Calculate pass/fail/skip counts      │
 │  • Extract qTest tags                   │
 └────────────────┬────────────────────────┘
@@ -82,43 +78,38 @@ for (CucumberFeature feature : features) {
 │  (Fresh instance per feature)           │
 ├─────────────────────────────────────────┤
 │ ┌─────────────────────────────────────┐ │
-│ │ PdfStyler                           │ │ Fresh fonts per PDF
-│ │ • PdfFont regularFont               │ │ (No static state)
-│ │ • PdfFont boldFont                  │ │
-│ │ • PdfFont italicFont                │ │
-│ │ • PdfFont monoFont                  │ │
+│ │ PdfStyler                           │ │ PDFBox drawing helpers
+│ │ • Fonts: HELVETICA, HELVETICA_BOLD  │ │
+│ │ • drawText()                        │ │
+│ │ • drawStatusBadge()                 │ │
+│ │ • drawLabelValue()                  │ │
 │ └─────────────────────────────────────┘ │
 │ ┌─────────────────────────────────────┐ │
-│ │ PdfChartGenerator                   │ │ Donut charts
-│ │ • drawDonutChart()                  │ │
-│ │ • drawLegendItem()                  │ │
+│ │ PdfChartGenerator                   │ │
+│ │ • drawScenarioAndStepSummary()      │ │ Textual dist. for now
 │ └─────────────────────────────────────┘ │
 │ ┌─────────────────────────────────────┐ │
 │ │ DashboardPage (Page 1)              │ │
 │ │ • Feature name + status badge       │ │
 │ │ • Scenario & step statistics        │ │
-│ │ • Distribution charts               │ │
+│ │ • Distribution summary text         │ │
 │ └─────────────────────────────────────┘ │
 │ ┌─────────────────────────────────────┐ │
 │ │ SummaryPage (Page 2)                │ │
-│ │ • Scenario table                    │ │
-│ │ • Status per scenario               │ │
-│ │ • Duration column                   │ │
-│ │ • Totals footer                     │ │
+│ │ • Scenario listing (name/status)    │ │
+│ │ • Passed/failed counts              │ │
+│ │ • Duration                          │ │
 │ └─────────────────────────────────────┘ │
 │ ┌─────────────────────────────────────┐ │
 │ │ DetailedPage (Pages 3+)             │ │
 │ │ • Step keyword + name               │ │
-│ │ • Status dot + duration             │ │
-│ │ • Error messages (red)              │ │
-│ │ • DataTables                        │ │
-│ │ • DocStrings                        │ │
-│ │ • Embedded screenshots (base64)     │ │
+│ │ • Status + duration                 │ │
+│ │ • Error messages (first 3 lines)    │ │
+│ │ • DataTables (CSV-style)            │ │
+│ │ • DocStrings (monospace lines)      │ │
+│ │ • Screenshots (base64 → image)      │ │
 │ └─────────────────────────────────────┘ │
 └─────────────────────────────────────────┘
-         │
-         ▼ (One fresh instance per feature)
-    *.pdf (Output files)
 ```
 
 ## Data Flow
@@ -132,306 +123,98 @@ Cucumber JSON Input
 │  CucumberFeature[]   │  - CucumberFeature
 └──────────┬───────────┘  - CucumberScenario[]
            │              - CucumberStep[]
-           │              - CucumberStepResult
-           │              - CucumberEmbedding[]
            ▼
 ┌──────────────────────┐
 │ Statistics Calculation│  For each feature:
-│ (Pass/Fail/Skip)     │  - Count passed scenarios
-│                      │  - Count failed scenarios
-│                      │  - Count skipped scenarios
-└──────────┬───────────┘  - Total steps per scenario
-           │              - Status determination
+│ (Pass/Fail/Skip)     │  - Scenario counts
+└──────────┬───────────┘  - Step counts
+           │
            ▼
 ┌──────────────────────┐
 │ PDF Generation Loop  │  For each feature:
-│ for (Feature feat)   │  1. Create FeaturePdfGenerator
-└──────────┬───────────┘  2. Create fresh PdfStyler
-           │              3. Build Dashboard page
-           │              4. Build Summary page
-           ▼              5. Build Detailed pages
-        Output PDFs       6. Close document
+│ FeaturePdfGenerator  │  1. new PDDocument
+└──────────┬───────────┘  2. Add pages (Dashboard/Summary/Detailed)
+           │              3. Save and close document
+           ▼
+        Output PDFs
     ├─ Feature1@TC_1.pdf
     ├─ Feature2@TC_2.pdf
     └─ Feature3@TC_3.pdf
 ```
 
-## Key Design Decisions
+## Font & Resource Lifecycle
 
-### 1. Fresh Instance Per PDF
+### PDFBox Font Handling
 
-**Decision**: Create new `FeaturePdfGenerator`, `PdfStyler`, etc. for each feature
-
-**Rationale**:
-- No shared state between PDFs
-- Garbage collection immediately after use
-- Eliminates stream exhaustion issues
-- Enables safe parallelization
-
-**Trade-off**: Slightly higher memory usage during generation (mitigated by proper GC)
-
-### 2. Immutable Model Objects
-
-**Decision**: All Cucumber models (Feature, Scenario, Step) are immutable POJOs
-
-**Rationale**:
-- Thread-safe by design
-- Clear separation between parsing and rendering
-- Supports concurrent PDF generation
-- No accidental mutations
-
-### 3. Page Builder Pattern
-
-**Decision**: Separate page builders (DashboardPage, SummaryPage, DetailedPage)
-
-**Rationale**:
-- Single responsibility principle
-- Easy to customize individual pages
-- Testable in isolation
-- Clear structure matching PDF output
-
-### 4. iText 7 Over Alternatives
-
-**Alternatives Considered**:
-- **PdfBox**: Slower, less feature-rich
-- **FOP (XSL-FO)**: Overkill complexity
-- **Flying Saucer + iText**: Still needs iText
-- **Grasshopper7**: Broken for multi-PDF
-
-**Selected**: iText 7 because:
-- Stateless design
-- Industry standard
-- Performance optimized
-- Active maintenance
-- Commercial + AGPL licensing options
-
-### 5. No Chart Library Dependency
-
-**Decision**: Draw donut charts using iText canvas directly
-
-**Rationale**:
-- Avoid adding chart library dependencies
-- Full control over rendering
-- Lightweight implementation
-- Simple geometry (pie segments)
-
-## Font Management
-
-### Why Font State Matters
-
-In iText 7:
+We use PDFBox built-in **Type1 fonts**:
 
 ```java
-// ✅ Per-PDF approach (CORRECT)
 public class PdfStyler {
-    private final PdfFont regularFont;  // Instance variable
-    private final PdfFont boldFont;     // Fresh per PDF
-    
-    public PdfStyler() throws IOException {
-        this.regularFont = PdfFontFactory.createFont(StandardFonts.HELVETICA);
-        this.boldFont = PdfFontFactory.createFont(StandardFonts.HELVETICA_BOLD);
-        // Each PdfStyler instance has independent fonts
-    }
-}
-
-// PDF generation loop
-for (Feature f : features) {
-    PdfStyler styler = new PdfStyler();  // Fresh fonts
-    // Generate PDF using styler
-    // styler is GC'd when scope exits
+    public PDType1Font regularFont() { return PDType1Font.HELVETICA; }
+    public PDType1Font boldFont()    { return PDType1Font.HELVETICA_BOLD; }
+    public PDType1Font italicFont()  { return PDType1Font.HELVETICA_OBLIQUE; }
+    public PDType1Font monoFont()    { return PDType1Font.COURIER; }
 }
 ```
+
+These fonts are provided by PDFBox and do **not** rely on external
+InputStreams. There is no risk of stream exhaustion.
 
 ### Resource Lifecycle
 
 ```
-1. Create FeaturePdfGenerator
-   ├─ Create PdfStyler
-   │  ├─ Open font from StandardFonts.HELVETICA
-   │  ├─ Open font from StandardFonts.HELVETICA_BOLD
-   │  └─ Store as instance variables
-   ├─ Create DashboardPage(styler)
-   ├─ Create SummaryPage(styler)
-   └─ Create DetailedPage(styler)
+1. FeaturePdfGenerator.generateFeaturePdf()
+   ├─ new PDDocument()
+   ├─ new PDPage(A4) for Dashboard
+   ├─ new PDPage(A4) for Summary
+   ├─ new PDPage(A4) per scenario
+   ├─ Each page:
+   │   ├─ new PDPageContentStream(..., AppendMode.APPEND, true)
+   │   ├─ PdfStyler.drawText/drawStatusBadge/etc.
+   │   └─ contentStream.close()
+   ├─ document.save(file)
+   └─ document.close()  ← releases resources
 
-2. Generate PDF
-   ├─ Create PdfDocument
-   ├─ Create Document layout
-   ├─ Call dashboardPage.build(document, feature)
-   │  └─ Uses styler fonts for rendering
-   ├─ Call summaryPage.build(document, feature)
-   │  └─ Uses styler fonts for rendering
-   ├─ Call detailedPage.build(document, feature)
-   │  └─ Uses styler fonts for rendering
-   ├─ document.close()
-   ├─ pdfDoc.close()  ← Flushes all content
-   └─ writer.close()  ← Closes file handle
-
-3. Garbage Collection
-   ├─ FeaturePdfGenerator object released
-   ├─ PdfStyler released (fonts GC'd)
-   ├─ All page builders released
-   └─ PDF file is complete and readable
-
-4. Next PDF iteration
-   └─ Repeat with fresh instances
+2. Generator instance goes out of scope
+   └─ Eligible for garbage collection
 ```
 
 ## Thread Safety Considerations
 
-### Single-Threaded Generation (Current)
-
-Current implementation generates one PDF at a time:
-
-```java
-for (CucumberFeature feature : features) {
-    FeaturePdfGenerator generator = new FeaturePdfGenerator();
-    generator.generateFeaturePdf(feature, outputPath);
-}
-```
-
-### Future: Parallel Generation
-
-With stateless design, parallelization is possible:
+The design remains parallel-friendly:
 
 ```java
 features.parallelStream().forEach(feature -> {
     try {
         FeaturePdfGenerator generator = new FeaturePdfGenerator();
-        generator.generateFeaturePdf(feature, outputPath);
+        String qtestId  = parser.extractQtestCaseId(feature);
+        String filename = FeaturePdfGenerator.generateFilename(feature, qtestId);
+        generator.generateFeaturePdf(feature, outputDir + "/" + filename);
     } catch (IOException e) {
-        // Handle error
+        getLog().error("Failed: " + feature.getName(), e);
     }
 });
 ```
 
-**Why this works**: Each thread gets its own `FeaturePdfGenerator` with fresh fonts.
-
-## Error Handling
-
-### Font Creation Errors
-
-```java
-public PdfStyler() throws IOException {
-    try {
-        this.regularFont = PdfFontFactory.createFont(StandardFonts.HELVETICA);
-        // ...
-    } catch (IOException e) {
-        throw new IOException("Failed to initialize fonts", e);
-    }
-}
-```
-
-### Screenshot Embedding Errors
-
-```java
-try {
-    byte[] decodedImage = Base64.getDecoder().decode(base64Image);
-    Image image = new Image(ImageDataFactory.create(decodedImage));
-    document.add(image);
-} catch (Exception e) {
-    // Gracefully add error note instead of failing
-    Paragraph errorNote = new Paragraph("[Screenshot image failed to decode]");
-    document.add(errorNote);
-}
-```
+Each thread gets its own `FeaturePdfGenerator` + `PDDocument`; PDFBox is
+thread-safe as long as documents are not shared across threads.
 
 ## Performance Considerations
 
-### Memory Usage
+- **Per-feature overhead**: One PDDocument with a few pages
+- **Screenshots**: Embedded as compressed images via `PDImageXObject`
+- **100+ features**: Works reliably without font corruption
 
-- **Per-PDF overhead**: ~2-5 MB (fonts + styling resources)
-- **Per-screenshot**: Base64 decoded in memory during rendering
-- **100 features**: ~200-500 MB total
+Further optimizations (if needed):
+- Parallel generation (as above)
+- Reducing screenshot resolution before embedding
+- Skipping PDFs for features with no scenarios
 
-### Generation Time
+## Licensing
 
-- **Per-feature**: 100-500ms depending on scenario count
-- **With 100 screenshots**: 500ms-2s per feature
-- **Typical**: 10-20 features in 10-30 seconds
+- Plugin: **MIT License**
+- PDF engine: **Apache PDFBox (Apache-2.0)**
 
-### Optimization Opportunities
-
-1. **Parallel generation**: Split feature processing across threads
-2. **Streaming screenshots**: Process base64 in chunks
-3. **Image compression**: Reduce embedded screenshot sizes
-4. **Incremental PDFs**: Skip already-generated PDFs
-
-## Testing Strategy
-
-### Unit Tests
-
-- Model parsing (CucumberJsonParser)
-- Statistics calculation
-- Filename generation (qTest tag extraction)
-
-### Integration Tests
-
-- End-to-end: JSON → PDFs
-- Multi-feature generation
-- Error scenarios (missing JSON, invalid format)
-
-### Manual Validation
-
-- PDF visual quality
-- Font rendering
-- Screenshot embedding
-- Table formatting
-
-## Maintenance & Extensibility
-
-### Adding New Page Types
-
-```java
-public class NewPageType {
-    private final PdfStyler styler;
-    
-    public NewPageType(PdfStyler styler) {
-        this.styler = styler;
-    }
-    
-    public void build(Document document, CucumberFeature feature) {
-        // Implement page content
-    }
-}
-
-// In FeaturePdfGenerator
-public void generateFeaturePdf(...) throws IOException {
-    // ...
-    newPage.build(document, feature);
-    // ...
-}
-```
-
-### Adding New Styling Options
-
-```java
-public class ColorScheme {
-    // Add new colors
-    public static final Color CUSTOM = new DeviceRgb(r, g, b);
-}
-```
-
-## Comparison: Grasshopper7 vs This Plugin
-
-| Aspect | Grasshopper7 | Split PDF Reporter |
-|--------|--------------|-------------------|
-| Multi-PDF | Fails (static state) | Works perfectly |
-| Font Corruption | Yes (stream exhaustion) | No (fresh instances) |
-| Architecture | Monolithic | Modular (page builders) |
-| Dependency Size | Heavy | Lightweight (iText 7 only) |
-| Customization | Limited | Easy (page builders) |
-| Performance | Slow | Fast |
-| Maintenance | Abandoned | Active |
-| Thread Safety | No | Yes |
-| Code Quality | Legacy | Modern (Java 11+) |
-
-## Conclusion
-
-The architecture solves grasshopper7's problems through:
-
-1. **Eliminating static state** - Fresh instances per PDF
-2. **Using industry standard** - iText 7 over unmaintained libraries
-3. **Clear separation** - Page builders, models, styling
-4. **Thread-safe by design** - Enables future parallelization
-5. **Simple & maintainable** - Easy to extend and customize
+This combination avoids AGPL/commercial constraints that would come from
+using iText Core while preserving the stateless, per-feature PDF
+architecture originally designed to fix grasshopper7.

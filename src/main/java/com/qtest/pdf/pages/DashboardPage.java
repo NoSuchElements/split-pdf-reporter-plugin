@@ -1,22 +1,18 @@
 package com.qtest.pdf.pages;
 
-import com.itextpdf.kernel.pdf.PdfDocument;
-import com.itextpdf.kernel.pdf.PdfPage;
-import com.itextpdf.kernel.geom.PageSize;
-import com.itextpdf.layout.Document;
-import com.itextpdf.layout.element.*;
-import com.itextpdf.layout.properties.TextAlignment;
-import com.itextpdf.layout.properties.VerticalAlignment;
 import com.qtest.cucumber.model.CucumberFeature;
 import com.qtest.pdf.ColorScheme;
 import com.qtest.pdf.PdfChartGenerator;
 import com.qtest.pdf.PdfStyler;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 
 import java.io.IOException;
 
 /**
- * Dashboard Page - Displays overall feature statistics with donut charts.
- * Page 1 of feature PDF report.
+ * Dashboard page (page 1) for a feature PDF using PDFBox.
  */
 public class DashboardPage {
 
@@ -28,148 +24,45 @@ public class DashboardPage {
         this.chartGenerator = chartGenerator;
     }
 
-    /**
-     * Build the dashboard page
-     */
-    public void build(Document document, CucumberFeature feature, PdfDocument pdfDoc) throws IOException {
-        // Title with status badge
-        addHeaderWithBadge(document, feature);
+    public void build(PDDocument doc, PDPage page, CucumberFeature feature) throws IOException {
+        PDRectangle box = page.getMediaBox();
+        float margin = 40f;
+        float y = box.getUpperRightY() - margin;
 
-        // Statistics boxes
-        addStatisticsSection(document, feature);
+        try (PDPageContentStream cs = new PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true)) {
+            // Header: Feature name
+            String featureName = feature.getName() != null ? feature.getName() : "Unknown";
+            styler.drawText(doc, cs, "Feature: " + featureName, margin, y, styler.boldFont(), 18f);
 
-        // Charts
-        addChartsSection(document, feature, pdfDoc);
+            // Status badge on the right
+            float badgeWidth = 90f;
+            float badgeHeight = 20f;
+            float badgeX = box.getUpperRightX() - margin - badgeWidth;
+            float badgeY = y - 4f;
+            styler.drawStatusBadge(cs, feature.getOverallStatus(), badgeX, badgeY - badgeHeight + 4, badgeWidth, badgeHeight);
 
-        // Add page break for next page
-        document.add(new AreaBreak());
-    }
+            // Scenario stats
+            float statsY = y - 40f;
+            styler.drawLabelValue(cs, "Scenarios Total:", String.valueOf(feature.getTotalScenarios()), margin, statsY);
+            styler.drawLabelValue(cs, "Passed:", String.valueOf(feature.getPassedScenarios()), margin, statsY - 14);
+            styler.drawLabelValue(cs, "Failed:", String.valueOf(feature.getFailedScenarios()), margin, statsY - 28);
+            styler.drawLabelValue(cs, "Skipped:", String.valueOf(feature.getSkippedScenarios()), margin, statsY - 42);
 
-    /**
-     * Add header with feature name and overall status badge
-     */
-    private void addHeaderWithBadge(Document document, CucumberFeature feature) {
-        Table headerTable = new Table(2)
-                .setWidth(100, com.itextpdf.layout.properties.UnitValue.PERCENT)
-                .setBorder(com.itextpdf.layout.borders.Border.NO_BORDER);
+            // Step stats
+            float stepsY = statsY - 70f;
+            styler.drawLabelValue(cs, "Steps Total:", String.valueOf(feature.getTotalSteps()), margin, stepsY);
+            styler.drawLabelValue(cs, "Passed:", String.valueOf(feature.getPassedSteps()), margin, stepsY - 14);
+            styler.drawLabelValue(cs, "Failed:", String.valueOf(feature.getFailedSteps()), margin, stepsY - 28);
+            styler.drawLabelValue(cs, "Skipped:", String.valueOf(feature.getSkippedSteps()), margin, stepsY - 42);
+        }
 
-        // Feature name
-        Cell titleCell = new Cell()
-                .add(new Paragraph("Feature: " + (feature.getName() != null ? feature.getName() : "Unknown"))
-                        .setFont(styler.getBoldFont())
-                        .setFontSize(24))
-                .setBorder(com.itextpdf.layout.borders.Border.NO_BORDER)
-                .setVerticalAlignment(VerticalAlignment.MIDDLE);
-
-        // Status badge
-        Cell badgeCell = styler.createStatusCell(feature.getOverallStatus())
-                .setWidth(100)
-                .setHeight(40)
-                .setFont(styler.getBoldFont())
-                .setFontSize(14);
-
-        headerTable.addCell(titleCell);
-        headerTable.addCell(badgeCell);
-
-        document.add(headerTable);
-        document.add(new Paragraph(" ").setMarginBottom(10));
-    }
-
-    /**
-     * Add statistics section with counts
-     */
-    private void addStatisticsSection(Document document, CucumberFeature feature) {
-        Paragraph stats = new Paragraph()
-                .setFont(styler.getRegularFont())
-                .setFontSize(11)
-                .setMarginBottom(15);
-
-        stats.add(new com.itextpdf.layout.element.Text("Scenarios: ")
-                .setFont(styler.getBoldFont()));
-        stats.add(feature.getTotalScenarios() + " | ");
-
-        stats.add(new com.itextpdf.layout.element.Text("Passed: ")
-                .setFont(styler.getBoldFont())
-                .setFontColor(ColorScheme.PASSED));
-        stats.add(feature.getPassedScenarios() + " | ");
-
-        stats.add(new com.itextpdf.layout.element.Text("Failed: ")
-                .setFont(styler.getBoldFont())
-                .setFontColor(ColorScheme.FAILED));
-        stats.add(feature.getFailedScenarios() + " | ");
-
-        stats.add(new com.itextpdf.layout.element.Text("Skipped: ")
-                .setFont(styler.getBoldFont())
-                .setFontColor(ColorScheme.SKIPPED));
-        stats.add(String.valueOf(feature.getSkippedScenarios()));
-
-        document.add(stats);
-
-        // Step statistics
-        Paragraph stepStats = new Paragraph()
-                .setFont(styler.getRegularFont())
-                .setFontSize(11)
-                .setMarginBottom(15);
-
-        stepStats.add(new com.itextpdf.layout.element.Text("Steps: ")
-                .setFont(styler.getBoldFont()));
-        stepStats.add(feature.getTotalSteps() + " | ");
-
-        stepStats.add(new com.itextpdf.layout.element.Text("Passed: ")
-                .setFont(styler.getBoldFont())
-                .setFontColor(ColorScheme.PASSED));
-        stepStats.add(feature.getPassedSteps() + " | ");
-
-        stepStats.add(new com.itextpdf.layout.element.Text("Failed: ")
-                .setFont(styler.getBoldFont())
-                .setFontColor(ColorScheme.FAILED));
-        stepStats.add(feature.getFailedSteps() + " | ");
-
-        stepStats.add(new com.itextpdf.layout.element.Text("Skipped: ")
-                .setFont(styler.getBoldFont())
-                .setFontColor(ColorScheme.SKIPPED));
-        stepStats.add(String.valueOf(feature.getSkippedSteps()));
-
-        document.add(stepStats);
-        document.add(new Paragraph(" ").setMarginBottom(10));
-    }
-
-    /**
-     * Add charts section (scenario and step distribution)
-     */
-    private void addChartsSection(Document document, CucumberFeature feature, PdfDocument pdfDoc) throws IOException {
-        document.add(styler.createSectionTitle("Test Distribution"));
-
-        // Create a table for charts side by side
-        Table chartTable = new Table(2)
-                .setWidth(100, com.itextpdf.layout.properties.UnitValue.PERCENT);
-
-        // Scenario chart cell
-        Cell scenarioChartCell = new Cell()
-                .add(new Paragraph("Scenarios")
-                        .setFont(styler.getBoldFont())
-                        .setFontSize(12)
-                        .setTextAlignment(TextAlignment.CENTER))
-                .setBorder(com.itextpdf.layout.borders.Border.NO_BORDER);
-
-        // Step chart cell
-        Cell stepChartCell = new Cell()
-                .add(new Paragraph("Steps")
-                        .setFont(styler.getBoldFont())
-                        .setFontSize(12)
-                        .setTextAlignment(TextAlignment.CENTER))
-                .setBorder(com.itextpdf.layout.borders.Border.NO_BORDER);
-
-        chartTable.addCell(scenarioChartCell);
-        chartTable.addCell(stepChartCell);
-
-        document.add(chartTable);
-
-        // Charts will be drawn on canvas - placeholder for actual implementation
-        document.add(new Paragraph(String.format(
-                "Scenarios: %d Passed | %d Failed | %d Skipped\nSteps: %d Passed | %d Failed | %d Skipped",
+        // Simple textual chart summary placeholder (bottom area)
+        chartGenerator.drawScenarioAndStepSummary(
+                doc,
+                page,
                 feature.getPassedScenarios(), feature.getFailedScenarios(), feature.getSkippedScenarios(),
-                feature.getPassedSteps(), feature.getFailedSteps(), feature.getSkippedSteps()
-        )).setFont(styler.getRegularFont()).setFontSize(10));
+                feature.getPassedSteps(), feature.getFailedSteps(), feature.getSkippedSteps(),
+                margin, box.getLowerLeftY() + 80f
+        );
     }
 }

@@ -1,197 +1,105 @@
 package com.qtest.pdf;
 
-import com.itextpdf.io.font.constants.StandardFonts;
-import com.itextpdf.kernel.font.PdfFont;
-import com.itextpdf.kernel.font.PdfFontFactory;
-import com.itextpdf.kernel.pdf.canvas.draw.SolidLine;
-import com.itextpdf.layout.borders.Border;
-import com.itextpdf.layout.borders.SolidBorder;
-import com.itextpdf.layout.element.Cell;
-import com.itextpdf.layout.element.Paragraph;
-import com.itextpdf.layout.properties.TextAlignment;
-import com.itextpdf.layout.properties.VerticalAlignment;
-import com.itextpdf.kernel.colors.Color;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 
 import java.io.IOException;
 
 /**
- * Styling utilities for PDF elements.
- * Creates fresh instances per use - no static state for thread safety.
+ * Styling utilities for PDF elements using Apache PDFBox.
+ *
+ * <p>This is intentionally simpler than the iText-based version: instead of
+ * high-level layout elements (Paragraph, Cell, Table), we draw text and
+ * simple boxes directly on the content stream. The higher-level page
+ * builders (DashboardPage, SummaryPage, DetailedPage) orchestrate layout
+ * using these primitives.</p>
  */
 public class PdfStyler {
 
-    private final PdfFont regularFont;
-    private final PdfFont boldFont;
-    private final PdfFont italicFont;
-    private final PdfFont monoFont;
-
-    /**
-     * Initialize fonts for this PDF generation
-     */
-    public PdfStyler() throws IOException {
-        this.regularFont = PdfFontFactory.createFont(StandardFonts.HELVETICA);
-        this.boldFont = PdfFontFactory.createFont(StandardFonts.HELVETICA_BOLD);
-        this.italicFont = PdfFontFactory.createFont(StandardFonts.HELVETICA_OBLIQUE);
-        this.monoFont = PdfFontFactory.createFont(StandardFonts.COURIER);
+    // Fonts (built-in Type1 fonts, no external TTF, Apache-2.0 compatible)
+    public PDType1Font regularFont() {
+        return PDType1Font.HELVETICA;
     }
 
-    public PdfFont getRegularFont() {
-        return regularFont;
+    public PDType1Font boldFont() {
+        return PDType1Font.HELVETICA_BOLD;
     }
 
-    public PdfFont getBoldFont() {
-        return boldFont;
+    public PDType1Font italicFont() {
+        return PDType1Font.HELVETICA_OBLIQUE;
     }
 
-    public PdfFont getItalicFont() {
-        return italicFont;
-    }
-
-    public PdfFont getMonoFont() {
-        return monoFont;
+    public PDType1Font monoFont() {
+        return PDType1Font.COURIER;
     }
 
     /**
-     * Create header paragraph
+     * Draw a text string at (x, y) with the given font and size.
      */
-    public Paragraph createHeaderParagraph(String text) {
-        return new Paragraph(text)
-                .setFont(boldFont)
-                .setFontSize(24)
-                .setMarginBottom(10)
-                .setTextAlignment(TextAlignment.CENTER);
+    public void drawText(PDDocument doc, PDPageContentStream cs,
+                         String text, float x, float y,
+                         PDType1Font font, float fontSize) throws IOException {
+        if (text == null) return;
+        cs.beginText();
+        cs.setFont(font, fontSize);
+        cs.newLineAtOffset(x, y);
+        cs.showText(text);
+        cs.endText();
     }
 
     /**
-     * Create section title
+     * Draw left-aligned header text near the top of the page.
      */
-    public Paragraph createSectionTitle(String text) {
-        return new Paragraph(text)
-                .setFont(boldFont)
-                .setFontSize(14)
-                .setMarginTop(15)
-                .setMarginBottom(10)
-                .setTextAlignment(TextAlignment.LEFT);
+    public void drawHeader(PDDocument doc, PDPageContentStream cs,
+                           String text, float margin) throws IOException {
+        PDRectangle mediaBox = cs.getCurrentPage().getMediaBox();
+        float y = mediaBox.getUpperRightY() - margin;
+        drawText(doc, cs, text, margin, y, boldFont(), 18f);
     }
 
     /**
-     * Create body text
+     * Draw a colored rectangle (used for status badges, table headers, etc.).
      */
-    public Paragraph createBodyText(String text) {
-        return new Paragraph(text)
-                .setFont(regularFont)
-                .setFontSize(11)
-                .setMarginBottom(5);
+    public void drawFilledRect(PDPageContentStream cs,
+                               float x, float y, float width, float height,
+                               java.awt.Color awtColor) throws IOException {
+        cs.setNonStrokingColor(awtColor);
+        cs.addRect(x, y, width, height);
+        cs.fill();
     }
 
     /**
-     * Create status badge cell
+     * Draw a status badge with white text on a colored background.
      */
-    public Cell createStatusCell(String status) {
-        String displayStatus = status != null ? status.toUpperCase() : "UNKNOWN";
-        Cell cell = new Cell()
-                .add(new Paragraph(displayStatus)
-                        .setFont(boldFont)
-                        .setFontSize(10)
-                        .setFontColor(ColorScheme.TEXT_WHITE))
-                .setBackgroundColor(ColorScheme.getStatusColor(status))
-                .setTextAlignment(TextAlignment.CENTER)
-                .setVerticalAlignment(VerticalAlignment.MIDDLE)
-                .setPadding(5)
-                .setBorder(Border.NO_BORDER);
-        return cell;
+    public void drawStatusBadge(PDPageContentStream cs,
+                                String status,
+                                float x, float y, float width, float height) throws IOException {
+        String display = status != null ? status.toUpperCase() : "UNKNOWN";
+        java.awt.Color bg = ColorScheme.getStatusColorAwt(status);
+        drawFilledRect(cs, x, y, width, height, bg);
+
+        // Centered text inside the badge
+        cs.setNonStrokingColor(java.awt.Color.WHITE);
+        float textX = x + 6;
+        float textY = y + height / 2 - 4;
+        drawText(null, cs, display, textX, textY, boldFont(), 10f);
+        cs.setNonStrokingColor(java.awt.Color.BLACK);
     }
 
     /**
-     * Create table header cell
+     * Draw a simple label/value pair on a single line.
      */
-    public Cell createHeaderCell(String text) {
-        return new Cell()
-                .add(new Paragraph(text)
-                        .setFont(boldFont)
-                        .setFontSize(11)
-                        .setFontColor(ColorScheme.TEXT_WHITE))
-                .setBackgroundColor(ColorScheme.BG_HEADER)
-                .setTextAlignment(TextAlignment.CENTER)
-                .setVerticalAlignment(VerticalAlignment.MIDDLE)
-                .setPadding(8)
-                .setBorder(new SolidBorder(ColorScheme.BORDER, 0.5f));
-    }
-
-    /**
-     * Create table data cell
-     */
-    public Cell createDataCell(String text, boolean alternate) {
-        Cell cell = new Cell()
-                .add(new Paragraph(text != null ? text : "")
-                        .setFont(regularFont)
-                        .setFontSize(10))
-                .setTextAlignment(TextAlignment.LEFT)
-                .setVerticalAlignment(VerticalAlignment.MIDDLE)
-                .setPadding(6);
-
-        if (alternate) {
-            cell.setBackgroundColor(ColorScheme.BG_ROW_ALT);
+    public void drawLabelValue(PDPageContentStream cs,
+                               String label, String value,
+                               float x, float y) throws IOException {
+        if (label != null) {
+            drawText(null, cs, label, x, y, boldFont(), 10f);
         }
-        cell.setBorder(new SolidBorder(ColorScheme.BORDER, 0.5f));
-        return cell;
-    }
-
-    /**
-     * Create data cell with center alignment
-     */
-    public Cell createDataCellCentered(String text, boolean alternate) {
-        Cell cell = createDataCell(text, alternate);
-        cell.setTextAlignment(TextAlignment.CENTER);
-        return cell;
-    }
-
-    /**
-     * Create error message paragraph (for failures)
-     */
-    public Paragraph createErrorParagraph(String errorMessage) {
-        return new Paragraph(errorMessage)
-                .setFont(monoFont)
-                .setFontSize(9)
-                .setFontColor(ColorScheme.FAILED)
-                .setMarginTop(5)
-                .setMarginBottom(5)
-                .setMarginLeft(10)
-                .setMarginRight(10);
-    }
-
-    /**
-     * Create step line paragraph (keyword + name)
-     */
-    public Paragraph createStepParagraph(String keyword, String stepName) {
-        Paragraph p = new Paragraph()
-                .setFont(regularFont)
-                .setFontSize(11)
-                .setMarginBottom(3);
-
-        if (keyword != null && !keyword.isEmpty()) {
-            p.add(new com.itextpdf.layout.element.Text(keyword.trim() + " ")
-                    .setFont(boldFont)
-                    .setFontColor(ColorScheme.TEXT_SECONDARY));
+        if (value != null) {
+            float valueX = x + 60;
+            drawText(null, cs, value, valueX, y, regularFont(), 10f);
         }
-
-        if (stepName != null) {
-            p.add(new com.itextpdf.layout.element.Text(stepName)
-                    .setFont(regularFont)
-                    .setFontColor(ColorScheme.TEXT_PRIMARY));
-        }
-
-        return p;
-    }
-
-    /**
-     * Create meta information cell (smaller font)
-     */
-    public Paragraph createMetaText(String text) {
-        return new Paragraph(text)
-                .setFont(regularFont)
-                .setFontSize(9)
-                .setFontColor(ColorScheme.TEXT_SECONDARY)
-                .setMarginBottom(3);
     }
 }

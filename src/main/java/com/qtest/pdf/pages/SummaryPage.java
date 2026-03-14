@@ -1,21 +1,19 @@
 package com.qtest.pdf.pages;
 
-import com.itextpdf.layout.Document;
-import com.itextpdf.layout.element.*;
-import com.itextpdf.layout.properties.TextAlignment;
-import com.itextpdf.layout.properties.VerticalAlignment;
-import com.itextpdf.layout.borders.Border;
-import com.itextpdf.layout.borders.SolidBorder;
 import com.qtest.cucumber.model.CucumberFeature;
 import com.qtest.cucumber.model.CucumberScenario;
-import com.qtest.pdf.ColorScheme;
 import com.qtest.pdf.PdfStyler;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 
+import java.io.IOException;
 import java.util.List;
 
 /**
- * Summary Page - Displays all scenarios with status, duration, and totals.
- * Page 2 of feature PDF report.
+ * Summary page (page 2) using simple PDFBox layout. We keep the same
+ * information as the original iText version but draw a hand-crafted table.
  */
 public class SummaryPage {
 
@@ -25,104 +23,76 @@ public class SummaryPage {
         this.styler = styler;
     }
 
-    /**
-     * Build the summary page
-     */
-    public void build(Document document, CucumberFeature feature) {
-        document.add(styler.createSectionTitle("Scenario Summary"));
-        document.add(new Paragraph(" ").setMarginBottom(5));
+    public void build(PDDocument doc, PDPage page, CucumberFeature feature) throws IOException {
+        PDRectangle box = page.getMediaBox();
+        float margin = 40f;
+        float y = box.getUpperRightY() - margin;
 
-        // Create scenario table
-        Table scenarioTable = createScenarioTable(feature);
-        document.add(scenarioTable);
+        try (PDPageContentStream cs = new PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true)) {
+            styler.drawText(doc, cs, "Scenario Summary", margin, y, styler.boldFont(), 16f);
 
-        document.add(new Paragraph(" ").setMarginBottom(10));
+            float tableTopY = y - 30f;
+            drawHeaderRow(cs, margin, tableTopY, box.getWidth() - 2 * margin);
 
-        // Add page break
-        document.add(new AreaBreak());
+            float rowHeight = 16f;
+            float currentY = tableTopY - rowHeight;
+
+            List<CucumberScenario> scenarios = feature.getScenarios();
+            if (scenarios != null) {
+                for (CucumberScenario scenario : scenarios) {
+                    drawScenarioRow(cs, margin, currentY, box.getWidth() - 2 * margin, scenario);
+                    currentY -= rowHeight;
+                }
+            }
+
+            // Totals footer
+            currentY -= 10f;
+            styler.drawText(doc, cs,
+                    String.format("Totals - Steps Passed: %d, Failed: %d", feature.getPassedSteps(), feature.getFailedSteps()),
+                    margin,
+                    currentY,
+                    styler.boldFont(),
+                    10f);
+        }
     }
 
-    /**
-     * Create table with all scenarios
-     */
-    private Table createScenarioTable(CucumberFeature feature) {
-        Table table = new Table(5)
-                .setWidth(100, com.itextpdf.layout.properties.UnitValue.PERCENT);
-
-        // Header row
-        table.addCell(styler.createHeaderCell("Scenario"));
-        table.addCell(styler.createHeaderCell("Status"));
-        table.addCell(styler.createHeaderCell("Passed"));
-        table.addCell(styler.createHeaderCell("Failed"));
-        table.addCell(styler.createHeaderCell("Duration"));
-
-        // Data rows
-        boolean alternate = false;
-        List<CucumberScenario> scenarios = feature.getScenarios();
-        if (scenarios != null) {
-            for (CucumberScenario scenario : scenarios) {
-                table.addCell(styler.createDataCell(scenario.getName(), alternate));
-                table.addCell(styler.createStatusCell(scenario.getStatus()));
-                table.addCell(styler.createDataCellCentered(String.valueOf(scenario.getPassedSteps()), alternate));
-                table.addCell(styler.createDataCellCentered(String.valueOf(scenario.getFailedSteps()), alternate));
-                table.addCell(styler.createDataCellCentered(scenario.formatDuration(), alternate));
-                alternate = !alternate;
-            }
+    private void drawHeaderRow(PDPageContentStream cs, float x, float y, float width) throws IOException {
+        float[] colWidths = columns(width);
+        float colX = x;
+        String[] headers = {"Scenario", "Status", "Passed", "Failed", "Duration"};
+        for (int i = 0; i < headers.length; i++) {
+            styler.drawText(null, cs, headers[i], colX + 2, y, styler.boldFont(), 10f);
+            colX += colWidths[i];
         }
+    }
 
-        // Footer row with totals
-        Cell totalLabelCell = new Cell()
-                .add(new Paragraph("TOTALS")
-                        .setFont(styler.getBoldFont())
-                        .setFontSize(11)
-                        .setFontColor(ColorScheme.TEXT_WHITE))
-                .setBackgroundColor(ColorScheme.BG_HEADER)
-                .setPadding(8)
-                .setTextAlignment(TextAlignment.LEFT)
-                .setBorder(new SolidBorder(ColorScheme.BORDER, 0.5f));
+    private void drawScenarioRow(PDPageContentStream cs, float x, float y, float width,
+                                 CucumberScenario s) throws IOException {
+        float[] colWidths = columns(width);
+        float colX = x;
 
-        Cell emptyCell = new Cell()
-                .add(new Paragraph(""))
-                .setBackgroundColor(ColorScheme.BG_HEADER)
-                .setPadding(8)
-                .setBorder(new SolidBorder(ColorScheme.BORDER, 0.5f));
+        String[] values = {
+                s.getName(),
+                s.getStatus(),
+                String.valueOf(s.getPassedSteps()),
+                String.valueOf(s.getFailedSteps()),
+                s.formatDuration()
+        };
 
-        Cell totalPassedCell = new Cell()
-                .add(new Paragraph(String.valueOf(feature.getPassedSteps()))
-                        .setFont(styler.getBoldFont())
-                        .setFontSize(11)
-                        .setFontColor(ColorScheme.TEXT_WHITE))
-                .setBackgroundColor(ColorScheme.BG_HEADER)
-                .setTextAlignment(TextAlignment.CENTER)
-                .setPadding(8)
-                .setBorder(new SolidBorder(ColorScheme.BORDER, 0.5f));
+        for (int i = 0; i < values.length; i++) {
+            styler.drawText(null, cs, values[i], colX + 2, y, styler.regularFont(), 9f);
+            colX += colWidths[i];
+        }
+    }
 
-        Cell totalFailedCell = new Cell()
-                .add(new Paragraph(String.valueOf(feature.getFailedSteps()))
-                        .setFont(styler.getBoldFont())
-                        .setFontSize(11)
-                        .setFontColor(ColorScheme.TEXT_WHITE))
-                .setBackgroundColor(ColorScheme.BG_HEADER)
-                .setTextAlignment(TextAlignment.CENTER)
-                .setPadding(8)
-                .setBorder(new SolidBorder(ColorScheme.BORDER, 0.5f));
-
-        Cell totalDurationCell = new Cell()
-                .add(new Paragraph("-")
-                        .setFont(styler.getBoldFont())
-                        .setFontSize(11)
-                        .setFontColor(ColorScheme.TEXT_WHITE))
-                .setBackgroundColor(ColorScheme.BG_HEADER)
-                .setTextAlignment(TextAlignment.CENTER)
-                .setPadding(8)
-                .setBorder(new SolidBorder(ColorScheme.BORDER, 0.5f));
-
-        table.addCell(totalLabelCell);
-        table.addCell(emptyCell);
-        table.addCell(totalPassedCell);
-        table.addCell(totalFailedCell);
-        table.addCell(totalDurationCell);
-
-        return table;
+    private float[] columns(float totalWidth) {
+        // Simple proportional columns: 40%, 15%, 15%, 15%, 15%
+        return new float[]{
+                totalWidth * 0.40f,
+                totalWidth * 0.15f,
+                totalWidth * 0.15f,
+                totalWidth * 0.15f,
+                totalWidth * 0.15f
+        };
     }
 }
