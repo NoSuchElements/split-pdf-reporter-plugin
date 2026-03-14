@@ -41,6 +41,14 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- Maven plugin annotations for @Mojo, @Parameter, etc. -->
+        <dependency>
+            <groupId>org.apache.maven.plugin-tools</groupId>
+            <artifactId>maven-plugin-annotations</artifactId>
+            <version>${maven-plugin-annotations.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- JSON parsing for Cucumber results -->
         <dependency>
             <groupId>com.google.code.gson</groupId>
@@ -89,14 +97,6 @@
                 <configuration>
                     <goalPrefix>split-pdf-reporter</goalPrefix>
                 </configuration>
-                <dependencies>
-                    <!-- Ensure correct plugin-tools behaviour -->
-                    <dependency>
-                        <groupId>org.apache.maven.plugin-tools</groupId>
-                        <artifactId>maven-plugin-annotations</artifactId>
-                        <version>${maven-plugin-annotations.version}</version>
-                    </dependency>
-                </dependencies>
             </plugin>
         </plugins>
     </build>
