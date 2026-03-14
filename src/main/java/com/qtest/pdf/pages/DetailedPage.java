@@ -1,27 +1,23 @@
 package com.qtest.pdf.pages;
 
-import com.itextpdf.io.image.ImageDataFactory;
-import com.itextpdf.kernel.geom.Rectangle;
-import com.itextpdf.layout.Document;
-import com.itextpdf.layout.element.*;
-import com.itextpdf.layout.properties.TextAlignment;
-import com.itextpdf.layout.properties.VerticalAlignment;
-import com.itextpdf.layout.borders.Border;
-import com.itextpdf.layout.borders.SolidBorder;
+import com.qtest.cucumber.model.CucumberDataTable;
 import com.qtest.cucumber.model.CucumberScenario;
 import com.qtest.cucumber.model.CucumberStep;
-import com.qtest.cucumber.model.CucumberDataTable;
 import com.qtest.cucumber.model.CucumberTableRow;
-import com.qtest.pdf.ColorScheme;
 import com.qtest.pdf.PdfStyler;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 
 import java.io.IOException;
 import java.util.Base64;
 import java.util.List;
 
 /**
- * Detailed Page - Shows every step with keywords, names, durations, statuses, errors, and screenshots.
- * Pages 3+ of feature PDF report.
+ * Detailed scenario pages using PDFBox. Layout is simpler than the iText
+ * table-based version but preserves the same information hierarchy.
  */
 public class DetailedPage {
 
@@ -31,211 +27,149 @@ public class DetailedPage {
         this.styler = styler;
     }
 
-    /**
-     * Build detailed pages (one per scenario)
-     */
-    public void build(Document document, CucumberScenario scenario) throws IOException {
-        // Scenario header
-        addScenarioHeader(document, scenario);
+    public void build(PDDocument doc, PDPage page, CucumberScenario scenario) throws IOException {
+        PDRectangle box = page.getMediaBox();
+        float margin = 40f;
+        float y = box.getUpperRightY() - margin;
 
-        // Steps
-        addStepsSection(document, scenario);
+        try (PDPageContentStream cs = new PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true)) {
+            // Scenario header
+            String scenarioName = scenario.getName() != null ? scenario.getName() : "Unknown";
+            styler.drawText(doc, cs, "Scenario: " + scenarioName, margin, y, styler.boldFont(), 14f);
+            y -= 20f;
 
-        // Page break for next scenario
-        document.add(new AreaBreak());
-    }
+            // Meta: status + duration
+            styler.drawText(doc, cs,
+                    String.format("Status: %s  |  Duration: %s", scenario.getStatus(), scenario.formatDuration()),
+                    margin,
+                    y,
+                    styler.regularFont(),
+                    10f);
+            y -= 20f;
 
-    /**
-     * Add scenario header with name and tags
-     */
-    private void addScenarioHeader(Document document, CucumberScenario scenario) {
-        Paragraph header = new Paragraph("Scenario: " + (scenario.getName() != null ? scenario.getName() : "Unknown"))
-                .setFont(styler.getBoldFont())
-                .setFontSize(16)
-                .setMarginBottom(5);
-        document.add(header);
-
-        // Tags and metadata
-        Paragraph meta = new Paragraph()
-                .setFont(styler.getRegularFont())
-                .setFontSize(9)
-                .setFontColor(ColorScheme.TEXT_SECONDARY)
-                .setMarginBottom(10);
-
-        if (scenario.getTags() != null && !scenario.getTags().isEmpty()) {
-            meta.add(new com.itextpdf.layout.element.Text("Tags: "));
-            meta.add(String.join(", ", scenario.getTags()));
-            meta.add("\n");
+            // Steps
+            List<CucumberStep> steps = scenario.getSteps();
+            if (steps == null || steps.isEmpty()) {
+                styler.drawText(doc, cs, "No steps found", margin, y, styler.regularFont(), 10f);
+                return;
+            }
         }
 
-        meta.add(new com.itextpdf.layout.element.Text("Duration: "))
-                .add(scenario.formatDuration())
-                .add(" | ")
-                .add(new com.itextpdf.layout.element.Text("Status: ")
-                        .setFont(styler.getBoldFont())
-                        .setFontColor(ColorScheme.getStatusColor(scenario.getStatus())))
-                .add(scenario.getStatus().toUpperCase());
-
-        document.add(meta);
-        document.add(new Paragraph(" ").setMarginBottom(5));
-    }
-
-    /**
-     * Add steps section with all step details
-     */
-    private void addStepsSection(Document document, CucumberScenario scenario) throws IOException {
-        document.add(styler.createSectionTitle("Steps"));
-
-        List<CucumberStep> steps = scenario.getSteps();
-        if (steps == null || steps.isEmpty()) {
-            document.add(new Paragraph("No steps found")
-                    .setFont(styler.getRegularFont())
-                    .setFontSize(10));
-            return;
-        }
-
-        for (CucumberStep step : steps) {
-            addStepDetail(document, step);
+        float currentY = box.getUpperRightY() - margin - 60f;
+        for (CucumberStep step : scenario.getSteps()) {
+            currentY = addStep(doc, page, step, margin, currentY);
+            currentY -= 10f;
         }
     }
 
-    /**
-     * Add individual step details
-     */
-    private void addStepDetail(Document document, CucumberStep step) throws IOException {
-        // Step line with keyword and name
-        Paragraph stepLine = styler.createStepParagraph(step.getKeyword(), step.getName())
-                .setMarginTop(10)
-                .setMarginBottom(5);
-        document.add(stepLine);
-
-        // Status dot + duration
-        Paragraph statusLine = new Paragraph()
-                .setFont(styler.getRegularFont())
-                .setFontSize(10)
-                .setMarginBottom(5)
-                .setMarginLeft(20);
-
-        statusLine.add("● ")
-                .setFontColor(ColorScheme.getStatusColor(step.getStatus()));
-        statusLine.add(step.getStatus().toUpperCase() + " | ");
-        statusLine.add(String.valueOf(step.getDurationMillis()) + "ms");
-
-        document.add(statusLine);
-
-        // Error message if failed
-        if ("FAILED".equalsIgnoreCase(step.getStatus()) && !step.getErrorMessage().isEmpty()) {
-            addErrorSection(document, step.getErrorMessage());
-        }
-
-        // DataTable if present
-        if (step.getDataTable() != null && !step.getDataTable().isEmpty()) {
-            addDataTableSection(document, step.getDataTable());
-        }
-
-        // DocString if present
-        if (step.getDocString() != null && step.getDocString().getContent() != null) {
-            addDocStringSection(document, step.getDocString().getContent());
-        }
-
-        // Embedded screenshot if present
-        String screenshot = step.getScreenshotBase64();
-        if (screenshot != null && !screenshot.isEmpty()) {
-            addScreenshotSection(document, screenshot);
+    public void buildEmpty(PDDocument doc, PDPage page) throws IOException {
+        PDRectangle box = page.getMediaBox();
+        float margin = 40f;
+        try (PDPageContentStream cs = new PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true)) {
+            styler.drawText(doc, cs, "No scenarios found in this feature", margin,
+                    box.getUpperRightY() - margin, styler.regularFont(), 12f);
         }
     }
 
-    /**
-     * Add error section (red text, first 3 lines + overflow count)
-     */
-    private void addErrorSection(Document document, String errorMessage) {
-        String[] lines = errorMessage.split("\n");
-        StringBuilder displayError = new StringBuilder();
+    private float addStep(PDDocument doc, PDPage page, CucumberStep step,
+                          float margin, float y) throws IOException {
+        PDRectangle box = page.getMediaBox();
+        try (PDPageContentStream cs = new PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true)) {
+            // Step keyword + name
+            String line = (step.getKeyword() != null ? step.getKeyword().trim() + " " : "") +
+                    (step.getName() != null ? step.getName() : "");
+            styler.drawText(doc, cs, line, margin, y, styler.regularFont(), 11f);
+            y -= 14f;
+
+            // Status + duration
+            String statusLine = String.format("%s  |  %d ms",
+                    step.getStatus().toUpperCase(), step.getDurationMillis());
+            styler.drawText(doc, cs, statusLine, margin + 10f, y, styler.regularFont(), 9f);
+            y -= 12f;
+
+            // Error message (first 3 lines + overflow count)
+            if ("FAILED".equalsIgnoreCase(step.getStatus()) && step.getErrorMessage() != null && !step.getErrorMessage().isEmpty()) {
+                y = addError(doc, cs, step.getErrorMessage(), margin + 10f, y);
+            }
+
+            // Data tables
+            if (step.getDataTable() != null && !step.getDataTable().isEmpty()) {
+                y = addDataTables(doc, cs, step.getDataTable(), margin + 10f, y, box.getWidth() - 2 * margin - 10f);
+            }
+
+            // DocString
+            if (step.getDocString() != null && step.getDocString().getContent() != null) {
+                y = addDocString(doc, cs, step.getDocString().getContent(), margin + 10f, y, box.getWidth() - 2 * margin - 10f);
+            }
+
+            // Screenshot
+            if (step.getScreenshotBase64() != null && !step.getScreenshotBase64().isEmpty()) {
+                y = addScreenshot(doc, page, step.getScreenshotBase64(), margin + 10f, y - 4f, 400f);
+            }
+        }
+        return y;
+    }
+
+    private float addError(PDDocument doc, PDPageContentStream cs, String error,
+                           float x, float y) throws IOException {
+        String[] lines = error.split("\n");
         int displayLines = Math.min(lines.length, 3);
-
         for (int i = 0; i < displayLines; i++) {
-            displayError.append(lines[i]).append("\n");
+            styler.drawText(doc, cs, lines[i], x, y, styler.monoFont(), 8f);
+            y -= 10f;
         }
-
         if (lines.length > 3) {
-            displayError.append("... + ").append(lines.length - 3).append(" more lines");
+            String more = "... + " + (lines.length - 3) + " more lines";
+            styler.drawText(doc, cs, more, x, y, styler.monoFont(), 8f);
+            y -= 10f;
         }
-
-        Paragraph errorPara = styler.createErrorParagraph(displayError.toString());
-        errorPara.setMarginLeft(20);
-        document.add(errorPara);
+        return y;
     }
 
-    /**
-     * Add DataTable section
-     */
-    private void addDataTableSection(Document document, List<CucumberDataTable> dataTables) {
-        for (CucumberDataTable dataTable : dataTables) {
-            List<CucumberTableRow> rows = dataTable.getRows();
+    private float addDataTables(PDDocument doc, PDPageContentStream cs,
+                                List<CucumberDataTable> tables,
+                                float x, float y, float maxWidth) throws IOException {
+        for (CucumberDataTable t : tables) {
+            List<CucumberTableRow> rows = t.getRows();
             if (rows == null || rows.isEmpty()) continue;
-
-            int columnCount = rows.get(0).getCells().size();
-            Table table = new Table(columnCount)
-                    .setWidth(90, com.itextpdf.layout.properties.UnitValue.PERCENT)
-                    .setMarginLeft(20)
-                    .setMarginTop(5)
-                    .setMarginBottom(5);
-
-            // Header row (first row of DataTable)
-            CucumberTableRow headerRow = rows.get(0);
-            for (String cell : headerRow.getCells()) {
-                table.addCell(styler.createHeaderCell(cell));
+            // Draw simple CSV-style rows
+            for (CucumberTableRow row : rows) {
+                String joined = String.join(" | ", row.getCells());
+                styler.drawText(doc, cs, joined, x, y, styler.monoFont(), 8f);
+                y -= 10f;
             }
-
-            // Data rows
-            boolean alternate = false;
-            for (int i = 1; i < rows.size(); i++) {
-                CucumberTableRow row = rows.get(i);
-                for (String cell : row.getCells()) {
-                    table.addCell(styler.createDataCell(cell, alternate));
-                }
-                alternate = !alternate;
-            }
-
-            document.add(table);
+            y -= 6f;
         }
+        return y;
     }
 
-    /**
-     * Add DocString section (code block-like)
-     */
-    private void addDocStringSection(Document document, String content) {
-        Paragraph docStringPara = new Paragraph(content)
-                .setFont(styler.getMonoFont())
-                .setFontSize(9)
-                .setBackgroundColor(ColorScheme.BG_ROW_ALT)
-                .setPadding(8)
-                .setMarginLeft(20)
-                .setMarginTop(5)
-                .setMarginBottom(5);
-        document.add(docStringPara);
+    private float addDocString(PDDocument doc, PDPageContentStream cs,
+                               String content, float x, float y, float maxWidth) throws IOException {
+        String[] lines = content.split("\r?\n");
+        for (String line : lines) {
+            styler.drawText(doc, cs, line, x, y, styler.monoFont(), 8f);
+            y -= 10f;
+        }
+        y -= 6f;
+        return y;
     }
 
-    /**
-     * Add embedded screenshot (base64 encoded image)
-     */
-    private void addScreenshotSection(Document document, String base64Image) throws IOException {
+    private float addScreenshot(PDDocument doc, PDPage page, String base64,
+                                float x, float y, float targetWidth) throws IOException {
         try {
-            byte[] decodedImage = Base64.getDecoder().decode(base64Image);
-            Image image = new Image(ImageDataFactory.create(decodedImage))
-                    .setWidth(400)
-                    .setMarginLeft(20)
-                    .setMarginTop(8)
-                    .setMarginBottom(8);
-            document.add(image);
+            byte[] bytes = Base64.getDecoder().decode(base64);
+            PDImageXObject img = PDImageXObject.createFromByteArray(doc, bytes, "screenshot");
+            float scale = targetWidth / img.getWidth();
+            float height = img.getHeight() * scale;
+            try (PDPageContentStream cs = new PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true)) {
+                cs.drawImage(img, x, y - height, targetWidth, height);
+            }
+            return y - height - 6f;
         } catch (Exception e) {
-            // If image decode fails, add error note
-            Paragraph errorNote = new Paragraph("[Screenshot image failed to decode]")
-                    .setFont(styler.getRegularFont())
-                    .setFontSize(9)
-                    .setFontColor(ColorScheme.TEXT_SECONDARY)
-                    .setMarginLeft(20);
-            document.add(errorNote);
+            try (PDPageContentStream cs = new PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true)) {
+                styler.drawText(doc, cs, "[Screenshot image failed to decode]", x, y, styler.regularFont(), 8f);
+            }
+            return y - 12f;
         }
     }
 }
