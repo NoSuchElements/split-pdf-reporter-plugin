@@ -1,6 +1,7 @@
 package com.qtest.cucumber.model;
 
 import com.google.gson.annotations.SerializedName;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -11,7 +12,8 @@ public class CucumberScenario {
     private String description;
     private String type;
     private String id;
-    private List<String> tags;
+    @SerializedName("tags")
+    private List<CucumberTag> tagObjects;
     private List<CucumberStep> steps;
     private String keyword;
 
@@ -43,8 +45,19 @@ public class CucumberScenario {
         return id;
     }
 
+    /**
+     * Return tag names for this scenario.
+     */
     public List<String> getTags() {
-        return tags;
+        List<String> names = new ArrayList<>();
+        if (tagObjects != null) {
+            for (CucumberTag tag : tagObjects) {
+                if (tag != null && tag.getName() != null) {
+                    names.add(tag.getName());
+                }
+            }
+        }
+        return names;
     }
 
     public List<CucumberStep> getSteps() {
