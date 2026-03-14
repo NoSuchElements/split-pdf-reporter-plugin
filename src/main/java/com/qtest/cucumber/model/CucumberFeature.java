@@ -12,9 +12,13 @@ public class CucumberFeature {
     private String name;
     private String description;
     private String uri;
+
     @SerializedName("tags")
     private List<CucumberTag> tagObjects;
+
+    @SerializedName("elements")
     private List<CucumberScenario> scenarios;
+
     private String id;
 
     @SerializedName("keyword")
