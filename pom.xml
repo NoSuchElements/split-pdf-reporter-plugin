@@ -33,17 +33,11 @@
             <version>${pdfbox.version}</version>
         </dependency>
 
-        <!-- Maven Plugin API -->
+        <!-- Maven Plugin API (provided by Maven at runtime) -->
         <dependency>
             <groupId>org.apache.maven</groupId>
             <artifactId>maven-plugin-api</artifactId>
             <version>${maven-plugin-api.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>org.apache.maven.plugin-tools</groupId>
-            <artifactId>maven-plugin-annotations</artifactId>
-            <version>${maven-plugin-annotations.version}</version>
             <scope>provided</scope>
         </dependency>
 
@@ -95,6 +89,14 @@
                 <configuration>
                     <goalPrefix>split-pdf-reporter</goalPrefix>
                 </configuration>
+                <dependencies>
+                    <!-- Ensure correct plugin-tools behaviour -->
+                    <dependency>
+                        <groupId>org.apache.maven.plugin-tools</groupId>
+                        <artifactId>maven-plugin-annotations</artifactId>
+                        <version>${maven-plugin-annotations.version}</version>
+                    </dependency>
+                </dependencies>
             </plugin>
         </plugins>
     </build>
