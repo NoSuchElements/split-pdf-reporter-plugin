@@ -6,7 +6,10 @@ import com.google.gson.annotations.SerializedName;
  * Represents embedded content (screenshots, logs, etc.) in test results.
  */
 public class CucumberEmbedding {
-    @SerializedName("mime_type")
+
+    // Support both "mimetype" (as emitted by current Cucumber JSON) and
+    // "mime_type" (older/alternative producers) without breaking existing behavior.
+    @SerializedName(value = "mimetype", alternate = {"mime_type"})
     private String mimeType;
 
     private String data; // base64 encoded

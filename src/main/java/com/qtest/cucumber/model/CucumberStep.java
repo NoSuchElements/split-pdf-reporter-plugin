@@ -1,6 +1,7 @@
 package com.qtest.cucumber.model;
 
 import com.google.gson.annotations.SerializedName;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -85,16 +86,27 @@ public class CucumberStep {
     }
 
     /**
-     * Get embedded screenshot if available
+     * Get all embedded screenshots for this step (zero, one, or many).
      */
-    public String getScreenshotBase64() {
-        if (result != null && result.getEmbeddings() != null && !result.getEmbeddings().isEmpty()) {
+    public List<String> getScreenshotBase64List() {
+        List<String> screenshots = new ArrayList<>();
+        if (result != null && result.getEmbeddings() != null) {
             for (CucumberEmbedding embedding : result.getEmbeddings()) {
-                if (embedding.isScreenshot()) {
-                    return embedding.getData();
+                if (embedding != null && embedding.isScreenshot()
+                        && embedding.getData() != null && !embedding.getData().isEmpty()) {
+                    screenshots.add(embedding.getData());
                 }
             }
         }
-        return null;
+        return screenshots;
+    }
+
+    /**
+     * Get the first embedded screenshot for this step, if any.
+     * Existing callers rely on a single image; this remains for compatibility.
+     */
+    public String getScreenshotBase64() {
+        List<String> screenshots = getScreenshotBase64List();
+        return screenshots.isEmpty() ? null : screenshots.get(0);
     }
 }
