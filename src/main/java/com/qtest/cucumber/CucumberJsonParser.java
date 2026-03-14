@@ -2,114 +2,194 @@ package com.qtest.cucumber;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonSyntaxException;
 import com.google.gson.reflect.TypeToken;
 import com.qtest.cucumber.model.CucumberFeature;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.qtest.cucumber.model.CucumberScenario;
+import com.qtest.cucumber.model.CucumberStep;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
 import java.lang.reflect.Type;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Parser for Cucumber JSON test results.
- * Immutable - creates fresh Gson instance per parse.
+ * Parses a Cucumber JSON report file into a list of {@link CucumberFeature} objects.
+ *
+ * <p>Stateless — safe to call {@link #parseJsonFile} multiple times on the same
+ * instance (e.g. when the glob pattern matched several JSON files).</p>
  */
 public class CucumberJsonParser {
-    private static final Logger logger = LoggerFactory.getLogger(CucumberJsonParser.class);
+
+    private static final String QTEST_TAG_PREFIX = "@QTEST_TC_";
 
     private final Gson gson;
+    private final boolean verbose;
 
     public CucumberJsonParser() {
+        this(false);
+    }
+
+    public CucumberJsonParser(boolean verbose) {
+        this.verbose  = verbose;
         this.gson = new GsonBuilder()
                 .setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ")
                 .create();
     }
 
+    // -----------------------------------------------------------------------
+    // Public API
+    // -----------------------------------------------------------------------
+
     /**
-     * Parse Cucumber JSON file
+     * Parse a Cucumber JSON file.
+     *
+     * @param jsonFilePath absolute or relative path to the JSON file
+     * @return non-null, possibly-empty list of features
+     * @throws IOException if the file cannot be read
      */
     public List<CucumberFeature> parseJsonFile(String jsonFilePath) throws IOException {
-        logger.info("Parsing Cucumber JSON: {}", jsonFilePath);
-
-        StringBuilder content = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new FileReader(jsonFilePath))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                content.append(line);
-            }
+        if (verbose) {
+            System.out.println("[SplitPdfReporter] Parsing: " + jsonFilePath);
         }
 
-        Type featureListType = new TypeToken<List<CucumberFeature>>(){}.getType();
-        List<CucumberFeature> features = gson.fromJson(content.toString(), featureListType);
+        String content = readFile(jsonFilePath);
 
-        // Calculate statistics
+        if (content == null || content.isBlank()) {
+            System.out.println("[SplitPdfReporter] WARN  : JSON file is empty — " + jsonFilePath);
+            return new ArrayList<>();
+        }
+
+        List<CucumberFeature> features;
+        try {
+            Type type = new TypeToken<List<CucumberFeature>>() {}.getType();
+            features  = gson.fromJson(content, type);
+        } catch (JsonSyntaxException e) {
+            throw new IOException("Malformed Cucumber JSON in '" + jsonFilePath + "': " + e.getMessage(), e);
+        }
+
+        // Gson can return null for a literal JSON null
+        if (features == null) {
+            System.out.println("[SplitPdfReporter] WARN  : JSON parsed to null — " + jsonFilePath);
+            return new ArrayList<>();
+        }
+
         for (CucumberFeature feature : features) {
+            sanitiseFeature(feature);
             calculateFeatureStatistics(feature);
         }
 
-        logger.info("Parsed {} features", features.size());
+        if (verbose) {
+            System.out.println("[SplitPdfReporter] Parsed " + features.size() + " feature(s)");
+        }
         return features;
     }
 
     /**
-     * Calculate statistics for a feature based on its scenarios and steps
+     * Extract the qTest case ID ({@code QTEST_TC_XXXX}) from a feature.
+     *
+     * <p>Search order:
+     * <ol>
+     *   <li>Feature-level tags</li>
+     *   <li>First scenario's tags (fallback for projects that tag scenarios, not features)</li>
+     * </ol>
+     * Returns {@code "UNKNOWN"} when no tag is found.
+     * </p>
      */
-    private void calculateFeatureStatistics(CucumberFeature feature) {
+    public String extractQtestCaseId(CucumberFeature feature) {
+        // 1. Feature-level tags
+        String id = findQtestTag(feature.getTags());
+        if (id != null) return id;
+
+        // 2. Scenario-level tags (fallback)
+        if (feature.getScenarios() != null) {
+            for (CucumberScenario scenario : feature.getScenarios()) {
+                id = findQtestTag(scenario.getTags());
+                if (id != null) return id;
+            }
+        }
+        return "UNKNOWN";
+    }
+
+    // -----------------------------------------------------------------------
+    // Private helpers
+    // -----------------------------------------------------------------------
+
+    /** Returns the tag value (without leading @) or null if not found. */
+    private String findQtestTag(List<String> tags) {
+        if (tags == null) return null;
+        for (String tag : tags) {
+            // Tags may arrive as "@QTEST_TC_1234" or "QTEST_TC_1234"
+            String normalised = tag.startsWith("@") ? tag.substring(1) : tag;
+            if (normalised.startsWith("QTEST_TC_")) {
+                return normalised;
+            }
+        }
+        return null;
+    }
+
+    private String readFile(String path) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new FileReader(path))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line).append('\n');
+            }
+        }
+        return sb.toString().trim();
+    }
+
+    /** Null-safe field defaulting before statistics are calculated. */
+    private void sanitiseFeature(CucumberFeature feature) {
         if (feature.getScenarios() == null) {
             feature.setScenarios(new ArrayList<>());
         }
+        if (feature.getTags() == null) {
+            feature.setTags(new ArrayList<>());
+        }
+        for (CucumberScenario scenario : feature.getScenarios()) {
+            if (scenario.getSteps() == null) {
+                scenario.setSteps(new ArrayList<>());
+            }
+            if (scenario.getTags() == null) {
+                scenario.setTags(new ArrayList<>());
+            }
+        }
+    }
 
-        int totalScenarios = feature.getScenarios().size();
-        int totalSteps = 0;
-        int passedScenarios = 0;
-        int failedScenarios = 0;
+    private void calculateFeatureStatistics(CucumberFeature feature) {
+        int totalScenarios   = 0;
+        int passedScenarios  = 0;
+        int failedScenarios  = 0;
         int skippedScenarios = 0;
-        int passedSteps = 0;
-        int failedSteps = 0;
+        int totalSteps   = 0;
+        int passedSteps  = 0;
+        int failedSteps  = 0;
         int skippedSteps = 0;
 
-        for (CucumberFeature.CucumberScenarioWrapper scenario : feature.getScenarios()) {
-            CucumberScenario innerScenario = scenario; // Unwrap if needed
-            // Calculate scenario stats
-            int scenarioFailed = 0;
-            int scenarioSkipped = 0;
-            int scenarioPassed = 0;
+        for (CucumberScenario scenario : feature.getScenarios()) {
+            totalScenarios++;
+            int sPass = 0, sFail = 0, sSkip = 0;
 
-            if (innerScenario.getSteps() != null) {
-                for (CucumberStep step : innerScenario.getSteps()) {
-                    totalSteps++;
-                    if (step.getResult() != null) {
-                        if (step.getResult().isFailed()) {
-                            failedSteps++;
-                            scenarioFailed++;
-                        } else if (step.getResult().isSkipped()) {
-                            skippedSteps++;
-                            scenarioSkipped++;
-                        } else if (step.getResult().isPassed()) {
-                            passedSteps++;
-                            scenarioPassed++;
-                        }
-                    }
-                }
+            for (CucumberStep step : scenario.getSteps()) {
+                totalSteps++;
+                CucumberStep.StepResult result = step.getResult();
+                if (result == null) continue;
+                if (result.isFailed())  { failedSteps++;  sFail++; }
+                else if (result.isSkipped()) { skippedSteps++; sSkip++; }
+                else if (result.isPassed())  { passedSteps++;  sPass++; }
             }
 
-            // Determine scenario status based on steps
-            if (scenarioFailed > 0) {
-                failedScenarios++;
-            } else if (scenarioSkipped > 0) {
-                skippedScenarios++;
-            } else {
-                passedScenarios++;
-            }
+            scenario.setTotalSteps(scenario.getSteps().size());
+            scenario.setPassedSteps(sPass);
+            scenario.setFailedSteps(sFail);
+            scenario.setSkippedSteps(sSkip);
 
-            // Set scenario stats
-            innerScenario.setTotalSteps(innerScenario.getSteps() != null ? innerScenario.getSteps().size() : 0);
-            innerScenario.setPassedSteps(scenarioPassed);
-            innerScenario.setFailedSteps(scenarioFailed);
-            innerScenario.setSkippedSteps(scenarioSkipped);
+            if (sFail > 0)       failedScenarios++;
+            else if (sSkip > 0)  skippedScenarios++;
+            else                 passedScenarios++;
         }
 
         feature.setTotalScenarios(totalScenarios);
@@ -120,23 +200,5 @@ public class CucumberJsonParser {
         feature.setPassedSteps(passedSteps);
         feature.setFailedSteps(failedSteps);
         feature.setSkippedSteps(skippedSteps);
-
-        logger.debug("Feature {}: Scenarios={}/{}/{} Steps={}/{}/{}",
-                feature.getName(), passedScenarios, failedScenarios, skippedScenarios,
-                passedSteps, failedSteps, skippedSteps);
-    }
-
-    /**
-     * Extract qTest case ID from feature tags
-     */
-    public String extractQtestCaseId(CucumberFeature feature) {
-        if (feature.getTags() != null) {
-            for (String tag : feature.getTags()) {
-                if (tag.startsWith("@QTEST_TC_")) {
-                    return tag.substring(1); // Remove @
-                }
-            }
-        }
-        return "UNKNOWN";
     }
 }
